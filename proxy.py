@@ -1,10 +1,18 @@
 #!/usr/bin/env python
 
 import socket, sys, threading
-from bs4 import BeautifulSoup
+from httplib import HTTPResponse
+from StringIO import StringIO
+
 
 serverAddr = '127.0.0.1'
-debug = 1
+debug = 0
+
+class FakeSocket():
+    def __init__(self, response_str):
+        self._file = StringIO(response_str)
+    def makefile(self, *args, **kwargs):
+        return self._file
 
 class TheServer:
     
@@ -149,7 +157,23 @@ class TheServer:
         
         """ Check if the response is valid to stored in cache """
 
-        return 1
+        global debug
+        source = FakeSocket(response)
+        parsed_response = HTTPResponse(source)
+        parsed_response.begin()
+        sc = parsed_response.status # status-code
+        try:
+            cc = parsed_response.getheader("Cache-Control").split(',') # cache-control
+        except:
+            cc = []
+        pragma = parsed_response.getheader("Pragma")
+        if sc == 302 or sc == 301 or sc == 200:
+            if 'no-cache' in cc or 'private' in cc or 'no-store' in cc or pragma == 'no-cache':
+                return 0
+            else:
+                return 1
+        else:
+            return 0
 
     def cache_storage(self, cachekey, response):
 
