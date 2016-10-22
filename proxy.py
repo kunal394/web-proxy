@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import socket, sys, threading
+from bs4 import BeautifulSoup
 
 serverAddr = '127.0.0.1'
 debug = 1
@@ -59,9 +60,25 @@ class TheServer:
         lk.release()
         conn.close()
 
+    def parse_request(self, request):
+
+        """ parse request from cient """
+        method, requrl, httpversion = request.split('\n')[0].split(' ')
+
+        remote_host = requrl.replace('http://', '').strip('/').split(':')[0]
+        #print("Req host: " + remote_host)
+        try:
+            remote_port = int(requrl.split(':')[1])
+        except:
+            remote_port = 80
+        cachekey = method + ':' + remote_host + ':' + str(remote_port)
+        return (remote_host, remote_port, cachekey)
+
+
     def proxy_thread(self, conn):
 
         """ thread to handle requests from client/browser """
+
         curr_client = ':'.join(str(i) for i in self.active_cons[conn])
         print("Started new thread for " + curr_client)
                 
@@ -73,20 +90,13 @@ class TheServer:
             return
         print("Received request:\n" + request)
 
-        method, requrl, httpversion = request.split('\n')[0].split(' ')
-        cachekey = method + ':' + requrl
+        remote_host, remote_port, cachekey = self.parse_request(request)
+
         if cachekey in self.cache:
             # key found in cache, return data from cache
             self.relay_to_client(conn, 0, cachekey, 1)
             self.close_client(conn)
             return
-
-        remote_host = requrl.replace('http://', '').strip('/').split(':')[0]
-        #print("Req host: " + remote_host)
-        try:
-            remote_port = int(requrl.split(':')[1])
-        except:
-            remote_port = 80
 
         remote_socket = self.relay_to_remote(remote_host, remote_port, request)
         if remote_socket:
@@ -99,6 +109,7 @@ class TheServer:
 
 
     def relay_to_remote(self, remote_host, remote_port, request):
+        
         """ relay the request from client to the remote server """
 
         try:
@@ -113,12 +124,14 @@ class TheServer:
             return False
 
     def relay_to_client(self, client_sock, remote_sock, cachekey = '', cache = 0):
+        
         """ relay the response from remote server to the client """
+        
         global debug
-
         data = ''
         if cache:
-            conn.send(cache[cachekey])
+            if debug: print("relaying from cache, cachekey: " + cachekey)
+            client_sock.send(self.cache[cachekey])
             return True
         
         data = remote_sock.recv(self.buffer_size)
@@ -132,13 +145,27 @@ class TheServer:
             data += d
         return data
 
+    def parse_response(self, response):
+        
+        """ Check if the response is valid to stored in cache """
+
+        return 1
+
     def cache_storage(self, cachekey, response):
 
-        """ Verify if the response recieved is eligible for cache storage 
-            If it is, store it in the cache """
-        pass
+        """ Store the response in cache """
+
+        global debug
+        if self.parse_response(response):
+            lk = threading.Lock()
+            lk.acquire()
+            if debug: print("adding to cache, cachekey: " + cachekey)
+            self.cache.update({cachekey : response})
+            #self.cache.update({cachekey : response + "\n\n***Serving from cache***\n\n"})
+            lk.release()
 
     def shutdown(self):
+        
         """ clear all data from the server """
 
         for i in self.active_cons:
@@ -146,6 +173,9 @@ class TheServer:
         self.server.close() # close the proxy socket
 
 def getPort(port):
+
+    """ get the port from the user """
+
     global serverAddr
     while 1:
         try:
