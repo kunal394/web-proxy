@@ -2,17 +2,29 @@
 
 import socket, sys, threading
 from httplib import HTTPResponse
+from BaseHTTPServer import BaseHTTPRequestHandler
 from StringIO import StringIO
-
 
 serverAddr = '127.0.0.1'
 debug = 0
+verbose = 1
 
 class FakeSocket():
     def __init__(self, response_str):
         self._file = StringIO(response_str)
     def makefile(self, *args, **kwargs):
         return self._file
+
+class HTTPRequest(BaseHTTPRequestHandler):
+    def __init__(self, request_text):
+        self.rfile = StringIO(request_text)
+        self.raw_requestline = self.rfile.readline()
+        self.error_code = self.error_message = None
+        self.parse_request()
+
+    def send_error(self, code, message):
+        self.error_code = code
+        self.error_message = message
 
 class TheServer:
     
@@ -24,7 +36,7 @@ class TheServer:
 
     def __init__(self, host, port):
 
-        """ initialise the server """
+        """ Initialise the server """
 
         try:
             self.port = port
@@ -41,7 +53,7 @@ class TheServer:
 
     def main_loop(self):
 
-        """ listen for incoming connections """
+        """ Listen for incoming connections """
         
         print("Listening for incoming connections...\n")
         while 1:
@@ -70,22 +82,41 @@ class TheServer:
 
     def parse_request(self, request):
 
-        """ parse request from cient """
-        method, requrl, httpversion = request.split('\n')[0].split(' ')
+        """ Parse request from cient """
 
-        remote_host = requrl.replace('http://', '').strip('/').split(':')[0]
+        req = HTTPRequest(request)
+        if req.command == 'CONNECT':
+            return (0, 0, 0, 0)
+        remote_host = req.headers['host']
+        if req.path.startswith('http'):
+            cachekey = req.command + ':' + req.path.strip('/')
+            try:
+                remote_port = int(requrl.split(':')[2])
+            except:
+                remote_port = 80
+        else:
+            cachekey = req.command + ':' + 'http://' + req.headers['host'] + req.path.strip('/')
+            try:
+                remote_port = int(requrl.split(':')[1])
+            except:
+                remote_port = 80
+        """
+        method, requrl, httpversion = request.split('\n')[0].split(' ')
+        remote_host = request.split('\n')[1].split(':')[1].strip()
+
+        #remote_host = requrl.replace('http://', '').strip('/').split(':')[0]
         #print("Req host: " + remote_host)
         try:
             remote_port = int(requrl.split(':')[1])
         except:
             remote_port = 80
-        cachekey = method + ':' + remote_host + ':' + str(remote_port)
-        return (remote_host, remote_port, cachekey)
+        cachekey = method + ':' + remote_host + ':' + str(remote_port)"""
+        return (remote_host, remote_port, cachekey, 1)
 
 
     def proxy_thread(self, conn):
 
-        """ thread to handle requests from client/browser """
+        """ Thread to handle requests from client/browser """
 
         curr_client = ':'.join(str(i) for i in self.active_cons[conn])
         print("Started new thread for " + curr_client)
@@ -98,7 +129,10 @@ class TheServer:
             return
         print("Received request:\n" + request)
 
-        remote_host, remote_port, cachekey = self.parse_request(request)
+        remote_host, remote_port, cachekey, valid = self.parse_request(request)
+        if not valid:
+            print("Invalid request type. Currently this proxy server doesn't handles this type of request :(")
+            return
 
         if cachekey in self.cache:
             # key found in cache, return data from cache
@@ -109,7 +143,8 @@ class TheServer:
         remote_socket = self.relay_to_remote(remote_host, remote_port, request)
         if remote_socket:
             response = self.relay_to_client(conn, remote_socket)
-            self.cache_storage(cachekey, response)
+            if response:
+                self.cache_storage(cachekey, response)
         else:
             print("Closing connection with client: " + curr_client)
         
@@ -118,7 +153,7 @@ class TheServer:
 
     def relay_to_remote(self, remote_host, remote_port, request):
         
-        """ relay the request from client to the remote server """
+        """ Relay the request from client to the remote server """
 
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -133,16 +168,20 @@ class TheServer:
 
     def relay_to_client(self, client_sock, remote_sock, cachekey = '', cache = 0):
         
-        """ relay the response from remote server to the client """
+        """ Relay the response from remote server to the client """
         
-        global debug
+        global verbose
         data = ''
         if cache:
-            if debug: print("relaying from cache, cachekey: " + cachekey)
+            if verbose: print("relaying from cache, cachekey: " + cachekey)
             client_sock.send(self.cache[cachekey])
             return True
         
-        data = remote_sock.recv(self.buffer_size)
+        try:
+            data = remote_sock.recv(self.buffer_size)
+        except Exception as e:
+            print("Error in receving response from the remote server. " + str(e))
+            return False
         d = data
         while len(d) > 0:
             if(debug): print("Relaying data to client: " + d)
@@ -157,10 +196,13 @@ class TheServer:
         
         """ Check if the response is valid to stored in cache """
 
-        global debug
-        source = FakeSocket(response)
-        parsed_response = HTTPResponse(source)
-        parsed_response.begin()
+        try:
+            source = FakeSocket(response)
+            parsed_response = HTTPResponse(source)
+            parsed_response.begin()
+        except Exception as e:
+            print("Error in parsing response. " + str(e))
+            return 0
         sc = parsed_response.status # status-code
         try:
             cc = parsed_response.getheader("Cache-Control").split(',') # cache-control
@@ -179,18 +221,18 @@ class TheServer:
 
         """ Store the response in cache """
 
-        global debug
+        global verbose
         if self.parse_response(response):
             lk = threading.Lock()
             lk.acquire()
-            if debug: print("adding to cache, cachekey: " + cachekey)
+            if verbose: print("adding to cache, cachekey: " + cachekey)
             self.cache.update({cachekey : response})
             #self.cache.update({cachekey : response + "\n\n***Serving from cache***\n\n"})
             lk.release()
 
     def shutdown(self):
         
-        """ clear all data from the server """
+        """ Clear all data from the server """
 
         for i in self.active_cons:
             i.close() # close all the active cons with the proxy
@@ -198,7 +240,7 @@ class TheServer:
 
 def getPort(port):
 
-    """ get the port from the user """
+    """ Get the port from the user """
 
     global serverAddr
     while 1:
