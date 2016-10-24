@@ -8,6 +8,7 @@ from StringIO import StringIO
 serverAddr = '127.0.0.1'
 debug = 0
 verbose = 1
+verbose2 = 0
 
 class FakeSocket():
     def __init__(self, response_str):
@@ -87,8 +88,8 @@ class TheServer:
         try:
             req = HTTPRequest(request)
             if req.command == 'CONNECT':
-            print("Invalid request type. Currently this proxy server doesn't handles CONNECT requests :(")
-            return (0, 0, 0, 0)
+                print("Invalid request type. Currently this proxy server doesn't handles CONNECT requests :(")
+                return (0, 0, 0, 0)
             remote_host = req.headers['host']
             if req.path.startswith('http'):
                 cachekey = req.command + ':' + req.path.strip('/')
@@ -201,6 +202,7 @@ class TheServer:
         
         """ Check if the response is valid to stored in cache """
 
+        global verbose2
         try:
             source = FakeSocket(response)
             parsed_response = HTTPResponse(source)
@@ -214,7 +216,8 @@ class TheServer:
         except:
             cc = []
         pragma = parsed_response.getheader("Pragma")
-        if sc == 302 or sc == 301 or sc == 200:
+        if verbose2: print("sc: " + str(sc) + ", pragma: " + str(pragma) + ", cache-control: " + str(';'.join(cc)))
+        if sc == 302 or sc == 301 or sc == 200 or sc == 304:
             if 'no-cache' in cc or 'private' in cc or 'no-store' in cc or pragma == 'no-cache':
                 return 0
             else:
@@ -230,10 +233,14 @@ class TheServer:
         if self.parse_response(response):
             lk = threading.Lock()
             lk.acquire()
-            if verbose: print("adding to cache, cachekey: " + cachekey)
-            self.cache.update({cachekey : response})
-            #self.cache.update({cachekey : response + "\n\n***Serving from cache***\n\n"})
-            lk.release()
+            try:
+                if verbose: print("adding to cache, cachekey: " + cachekey)
+                self.cache.update({cachekey : response})
+                #self.cache.update({cachekey : response + "\n\n***Serving from cache***\n\n"})
+            finally:
+                lk.release()
+        else:
+            if verbose: print("Cachekey: " + cachekey + ". Not adding to cache.")
 
     def shutdown(self):
         
