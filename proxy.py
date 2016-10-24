@@ -88,16 +88,26 @@ class TheServer:
         try:
             req = HTTPRequest(request)
             if req.command == 'CONNECT':
-                print("Invalid request type. Currently this proxy server doesn't handles CONNECT requests :(")
+                print("Unsupported request type. Currently this proxy server doesn't handles CONNECT requests :(")
                 return (0, 0, 0, 0)
-            remote_host = req.headers['host']
+            if 'host' in req.headers:
+                remote_host = req.headers['host']
+            else:
+                remote_host = None
             if req.path.startswith('http'):
+                if remote_host is None:
+                    remote_host = req.path.replace('http://', '').split(':')[0].strip('/')
                 cachekey = req.command + ':' + req.path.strip('/')
                 try:
                     remote_port = int(requrl.split(':')[2])
                 except:
                     remote_port = 80
             else:
+                if remote_host is None and req.path.startswith('/'):
+                    print("Invalid request!!")
+                    return(0, 0, 0, 0)
+                else:
+                    remote_host = req.path.split(':')[0].strip('/')
                 cachekey = req.command + ':' + 'http://' + remote_host + req.path.strip('/')
                 try:
                     remote_port = int(requrl.split(':')[1])
@@ -131,12 +141,13 @@ class TheServer:
             request = conn.recv(self.buffer_size) # get request from client
         except Exception as e:
             print("Error in receiving request from the client: " + curr_client + ". Closing Connection...")
-            conn.close()
+            self.close_client(conn)
             return
         print("Received request:\n" + request)
 
         remote_host, remote_port, cachekey, valid = self.parse_request(request)
         if not valid:
+            self.close_client(conn)
             return
 
         if cachekey in self.cache:
