@@ -84,22 +84,27 @@ class TheServer:
 
         """ Parse request from cient """
 
-        req = HTTPRequest(request)
-        if req.command == 'CONNECT':
+        try:
+            req = HTTPRequest(request)
+            if req.command == 'CONNECT':
+            print("Invalid request type. Currently this proxy server doesn't handles CONNECT requests :(")
             return (0, 0, 0, 0)
-        remote_host = req.headers['host']
-        if req.path.startswith('http'):
-            cachekey = req.command + ':' + req.path.strip('/')
-            try:
-                remote_port = int(requrl.split(':')[2])
-            except:
-                remote_port = 80
-        else:
-            cachekey = req.command + ':' + 'http://' + req.headers['host'] + req.path.strip('/')
-            try:
-                remote_port = int(requrl.split(':')[1])
-            except:
-                remote_port = 80
+            remote_host = req.headers['host']
+            if req.path.startswith('http'):
+                cachekey = req.command + ':' + req.path.strip('/')
+                try:
+                    remote_port = int(requrl.split(':')[2])
+                except:
+                    remote_port = 80
+            else:
+                cachekey = req.command + ':' + 'http://' + remote_host + req.path.strip('/')
+                try:
+                    remote_port = int(requrl.split(':')[1])
+                except:
+                    remote_port = 80
+        except Exception as e:
+            print("Error in parsing request: " + str(e))
+            return(0, 0, 0, 0)
         """
         method, requrl, httpversion = request.split('\n')[0].split(' ')
         remote_host = request.split('\n')[1].split(':')[1].strip()
@@ -131,11 +136,11 @@ class TheServer:
 
         remote_host, remote_port, cachekey, valid = self.parse_request(request)
         if not valid:
-            print("Invalid request type. Currently this proxy server doesn't handles this type of request :(")
             return
 
         if cachekey in self.cache:
             # key found in cache, return data from cache
+            if verbose: print("*****Cachehit*****")
             self.relay_to_client(conn, 0, cachekey, 1)
             self.close_client(conn)
             return
