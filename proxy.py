@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import socket, sys, threading
+import socket, sys, threading, os
 from httplib import HTTPResponse
 from BaseHTTPServer import BaseHTTPRequestHandler
 from StringIO import StringIO
@@ -33,7 +33,7 @@ class TheServer:
     active_cons = {} # dictionary for active connections
     cache = {} # cache data for faster reply
     buffer_size = 4096 # set buffer size to 4 KB
-    timeout = 20 #set timeout to 2 seconds
+    timeout = 200 #set timeout to 2 seconds
 
     def __init__(self, host, port):
 
@@ -129,6 +129,10 @@ class TheServer:
         cachekey = method + ':' + remote_host + ':' + str(remote_port)"""
         return (remote_host, remote_port, cachekey, 1)
 
+    def proxy_check(self, remote_host):
+        if os.environ['http_proxy'] == '' or remote_host.endswith('.iiit.ac.in') or remote_host == 'localhost':
+            return False
+        return True
 
     def proxy_thread(self, conn):
 
@@ -157,7 +161,13 @@ class TheServer:
             self.close_client(conn)
             return
 
-        remote_socket = self.relay_to_remote(remote_host, remote_port, request)
+        if self.proxy_check(remote_host):
+            proxy = os.environ['http_proxy']
+            proxy_host = proxy.split('//')[1].split(':')[0]
+            proxy_port = int(proxy.split(':')[2].strip('/'))
+            remote_socket = self.forward_to_proxy(proxy_host, proxy_port, request)
+        else:
+            remote_socket = self.relay_to_remote(remote_host, remote_port, request)
         if remote_socket:
             response = self.relay_to_client(conn, remote_socket)
             if response:
@@ -183,6 +193,21 @@ class TheServer:
             print("Error: " + str(e))
             return False
 
+    def forward_to_proxy(self, proxy_host, proxy_port, request):
+
+        """ Relay the request from client to the proxy server """
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(self.timeout)
+            s.connect((proxy_host, proxy_port))
+            s.sendall(request)
+            return s
+        except Exception as e:
+            print("Cannot relay data to the remote server: " + proxy_host + ':' + str(proxy_port))
+            print("Error: " + str(e))
+            return False
+
     def relay_to_client(self, client_sock, remote_sock, cachekey = '', cache = 0):
         
         """ Relay the response from remote server to the client """
@@ -201,9 +226,13 @@ class TheServer:
             return False
         d = data
         while len(d) > 0:
-            if(debug): print("Relaying data to client: " + d)
+            if(debug): print("Relaying data ot client: " + d)
             client_sock.send(d)
-            d = remote_sock.recv(self.buffer_size)
+            try:
+                d = remote_sock.recv(self.buffer_size)
+            except Exception as e:
+                print("Error in receving response from the remote server. " + str(e))
+                return False
             if (len(d) <= 0):
                 break
             data += d
